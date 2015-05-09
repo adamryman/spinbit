@@ -71,6 +71,10 @@
 #include <SPI.h>
 #include <SD.h>
 
+#include <SoftwareSerial.h>  
+
+
+
 #include "defines.h"
 
 // Declaring an union for the registers and the axis values.
@@ -116,8 +120,20 @@ typedef union accel_t_gyro_union
 const int sdChipSelectPin = 10;
 
 const int writeSwitchPin = 7;
+const int bluetoothSwitchPin = 6;
+const int deleteSwitchPin = 5;
+
+int bluetoothSwitchState = 0;
 int writeSwitchState = 0;
+int deleteSwitchState = 0;
+
 boolean writeBreak = false;
+
+int bluetoothTx = 2;  // TX - TX
+int bluetoothRx = 3;  // RX - RX
+
+SoftwareSerial bluetooth(bluetoothTx, bluetoothRx);
+
 
 void setup()
 {
@@ -127,6 +143,7 @@ void setup()
   uint8_t c;
   
   Serial.begin(9600);
+  bluetooth.begin(9600);
   
   //------------------------------ Gyro Setup ---------------------------//
   Wire.begin();
@@ -181,7 +198,9 @@ void setup()
   
   //------------------- Button / Toggle / Debug Setup ----------//
   
-  pinMode(buttonPin, INPUT)
+  pinMode(writeSwitchPin, INPUT);
+  pinMode(bluetoothSwitchPin, INPUT);
+  pinMode(deleteSwitchPin, INPUT);
   
 }
 
@@ -189,6 +208,8 @@ void loop()
 {
   
   writeSwitchState = digitalRead(writeSwitchPin);
+  bluetoothSwitchState = digitalRead(bluetoothSwitchPin);
+  deleteSwitchState = digitalRead(deleteSwitchPin);
   
   //Check if we should be logging to SD card from switch
   if(writeSwitchState)
@@ -271,6 +292,31 @@ void loop()
     }
     Serial.println("Not writing");
     delay(100);
+    
+    if(bluetoothSwitchState)
+    {
+      Serial.println(F("Attempting to open file to send over bluetooth"));
+      File dataFile = SD.open("datalog.txt");
+      
+      if(dataFile)
+      {
+       Serial.println(F("File available, sending"));
+       while(dataFile.available())
+       {
+         byte data = dataFile.read();
+         bluetooth.write(data);
+         Serial.println((char)data);
+         
+       }
+       
+       dataFile.close();
+      } 
+    }
+    if(deleteSwitchState)
+    {
+      Serial.println(F("Deleting datafile.txt"));
+      SD.remove("datafile.txt");
+    }
   }
 }
 
