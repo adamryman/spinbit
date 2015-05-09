@@ -301,16 +301,19 @@ void loop()
       if(dataFile)
       {
        Serial.println(F("File available, sending"));
+       if(dataFile.available()){
+         bluetooth.println("START");
+       }
        while(dataFile.available())
        {
          byte data = dataFile.read();
          bluetooth.write(data);
          Serial.println((char)data);
-         
        }
        
        dataFile.close();
-      } else
+      } 
+      else
       {
        Serial.println(F("No file available")); 
       }
@@ -319,16 +322,6 @@ void loop()
     {
       Serial.println(F("Deleting datalog.txt"));
       SD.remove("DATALOG.TXT");
-      
-      File dataFile = SD.open("datalog.txt", FILE_WRITE);
-  
-      // if the file is available, write to it:
-      if (dataFile) {
-        dataFile.println("START");
-        dataFile.close();
-        // print to the serial port too:
-      }
-      
     }
   }
 }
