@@ -310,12 +310,25 @@ void loop()
        }
        
        dataFile.close();
-      } 
+      } else
+      {
+       Serial.println(F("No file available")); 
+      }
     }
     if(deleteSwitchState)
     {
-      Serial.println(F("Deleting datafile.txt"));
-      SD.remove("datafile.txt");
+      Serial.println(F("Deleting datalog.txt"));
+      SD.remove("DATALOG.TXT");
+      
+      File dataFile = SD.open("datalog.txt", FILE_WRITE);
+  
+      // if the file is available, write to it:
+      if (dataFile) {
+        dataFile.println("START");
+        dataFile.close();
+        // print to the serial port too:
+      }
+      
     }
   }
 }
