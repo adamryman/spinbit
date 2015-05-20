@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">ArdunioBluetoothTwoWays2</string>
+
+    <string name="log_button">Log a new Spinning Session</string>
+    <string name="action_settings">Settings</string>
+    <string name="history_title">Spin History</string>
+    <string name="view_history_button">View History</string>
+</resources>
