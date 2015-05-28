@@ -35,8 +35,8 @@
 //      Register 0x6B (PWR_MGMT_2) = 0x40  (I read zero).
 //      Register 0x75 (WHO_AM_I)   = 0x68.
 //
- 
- 
+
+
 // MPU-6050 Short Example Sketch
 // By Arduino User JohnChi
 // August 17, 2014
@@ -44,10 +44,10 @@
 
 /*
   SD card datalogger
-
+ 
  This example shows how to log data from three analog sensors
  to an SD card using the SD library.
-
+ 
  The circuit:
  * analog sensors on analog ins 0, 1, and 2
  * SD card attached to SPI bus as follows:
@@ -55,25 +55,36 @@
  ** MISO - pin 12
  ** CLK - pin 13
  ** CS - pin 10
-
+ 
  created  24 Nov 2010
  modified 9 Apr 2012
  by Tom Igoe
-
+ 
  This example code is in the public domain.
-
+ 
  */
 
 //Includes 
- 
+
+// WinBond flash commands
+#define WB_WRITE_ENABLE       0x06
+#define WB_WRITE_DISABLE      0x04
+#define WB_CHIP_ERASE         0xc7
+#define WB_READ_STATUS_REG_1  0x05
+#define WB_READ_DATA          0x03
+#define WB_PAGE_PROGRAM       0x02
+#define WB_JEDEC_ID           0x9f
+
+//Change this to 0 to have device switch controlled 1 to have it bluetooth controlled
+#define BLUETOOTHCONTROLLED 1
+
+
 #include <Wire.h>
 
 #include <SPI.h>
 #include <SD.h>
 
 #include <SoftwareSerial.h>  
-
-
 
 #include "defines.h"
 
@@ -104,7 +115,8 @@ typedef union accel_t_gyro_union
     uint8_t y_gyro_l;
     uint8_t z_gyro_h;
     uint8_t z_gyro_l;
-  } reg;
+  } 
+  reg;
   struct
   {
     int16_t x_accel;
@@ -114,7 +126,8 @@ typedef union accel_t_gyro_union
     int16_t x_gyro;
     int16_t y_gyro;
     int16_t z_gyro;
-  } value;
+  } 
+  value;
 };
 
 const int sdChipSelectPin = 10;
@@ -129,11 +142,14 @@ int deleteSwitchState = 0;
 
 boolean writeBreak = false;
 
-int bluetoothTx = 2;  // TX - TX
-int bluetoothRx = 3;  // RX - RX
+int bluetoothTx = 3;  // TX - TX
+int bluetoothRx = 4;  // RX - RX
 
 SoftwareSerial bluetooth(bluetoothTx, bluetoothRx);
 
+int fileNumber = 0;
+
+char currentFile[14];
 
 void setup()
 {
@@ -141,13 +157,13 @@ void setup()
   //vars for printing
   int error;
   uint8_t c;
-  
+
   Serial.begin(9600);
   bluetooth.begin(9600);
-  
+
   //------------------------------ Gyro Setup ---------------------------//
   Wire.begin();
-  
+
   //Check WHO_AM_I Register
   error = MPU6050_read (MPU6050_WHO_AM_I, &c, 1);
   //F() macro stores on FLASH Memory rather than both SRAM and Flash Memory (why is that the default?)
@@ -156,14 +172,14 @@ void setup()
   Serial.print(c,HEX);
   Serial.print(F(", error = "));
   Serial.println(error,DEC);
-  
+
   //Check 'sleep' bit
   error = MPU6050_read (MPU6050_PWR_MGMT_1, &c, 1);
   Serial.print(F("PWR_MGMT_1 : "));
   Serial.print(c,HEX);
   Serial.print(F(", error = "));
   Serial.println(error,DEC);
-   
+
   //Change Gyro config register for FS_SEL
   MPU6050_write_reg(MPU6050_GYRO_CONFIG,MPU6050_FS_SEL_2000);
   //Check Gyro Config register
@@ -173,11 +189,11 @@ void setup()
 
   // Clear the 'sleep' bit to start the sensor.
   MPU6050_write_reg (MPU6050_PWR_MGMT_1, 0);
-  
+
   //---------------------- SD Card Setup ------------------------//
-  
+
   Serial.print("Initializing SD card...");
-  
+
   // see if the card is present and can be initialized:
   if (!SD.begin(sdChipSelectPin)) {
     Serial.println("Card failed, or not present");
@@ -185,46 +201,111 @@ void setup()
     return;
   }
   Serial.println("card initialized.");
-  
+
   File dataFile = SD.open("datalog.txt", FILE_WRITE);
-  
+
   // if the file is available, write to it:
   if (dataFile) {
-    dataFile.println("START");
     dataFile.close();
     // print to the serial port too:
     Serial.println("START");
   }
-  
+
   //------------------- Button / Toggle / Debug Setup ----------//
-  
+
   pinMode(writeSwitchPin, INPUT);
   pinMode(bluetoothSwitchPin, INPUT);
   pinMode(deleteSwitchPin, INPUT);
+  
+  //-------------------- FileManagement ------------------------//
+  
+  
+  fileNumber = readMeta();
+  if(fileNumber == -1)
+  {
+    setMeta(0);
+  }
+  currentFile = intToTextFile(fileNumber);
+  
+  Serial.println("Init checking Meta File");
+  if(!SD.exists("meta.txt"))
+  {
+    Serial.println("Creating Meta File");
+    File meta = SD.open("meta.txt", FILE_WRITE);
+    if(meta)
+    {
+      Serial.println("Adding a zero to the metafile");
+      meta.print('0');
+      meta.close(); 
+    } 
+  }
   
 }
 
 void loop()
 {
-  
-  writeSwitchState = digitalRead(writeSwitchPin);
-  bluetoothSwitchState = digitalRead(bluetoothSwitchPin);
-  deleteSwitchState = digitalRead(deleteSwitchPin);
-  
+  if(BLUETOOTHCONTROLLED)
+  {
+    if(bluetooth.available())
+    {
+      switch(bluetooth.read()) 
+      {
+        //write to file
+      case 'w':
+        writeSwitchState = 1;
+        bluetoothSwitchState = 0;
+        deleteSwitchState = 0;
+        break;
+        //send file over bluetooth
+      case 'b':
+        writeSwitchState = 0;
+        bluetoothSwitchState = 1;
+        deleteSwitchState = 0;
+        break;
+        //delete file
+      case 'd':
+        writeSwitchState = 0;
+        bluetoothSwitchState = 0;
+        deleteSwitchState = 1;
+        break;
+        //do nothing
+      case 'i':
+        writeSwitchState = 0;
+        bluetoothSwitchState = 0;
+        deleteSwitchState = 0;
+        break;
+
+      default:
+        //Serial.println("THIS SHOULD NOT HAPPEN");
+        break;
+      }
+    }
+  } 
+  else
+  {
+    writeSwitchState = digitalRead(writeSwitchPin);
+    bluetoothSwitchState = digitalRead(bluetoothSwitchPin);
+    deleteSwitchState = digitalRead(deleteSwitchPin);
+
+  }
+
+
+
+
   //Check if we should be logging to SD card from switch
   if(writeSwitchState)
   {
-    
+
     writeBreak = true;
-    
+
     int error;
     double dT;
     accel_t_gyro_union accel_t_gyro;
-    
+
     //Debug information
-    Serial.println(F(""));
-    Serial.println(F("MPU-6050"));
-   
+    //Serial.println(F(""));
+    //Serial.println(F("MPU-6050"));
+
     // Read the raw values.
     // Read 14 bytes at once,
     // containing acceleration, temperature and gyro.
@@ -232,96 +313,107 @@ void loop()
     // there is no filter enabled, and the values
     // are not very stable.
     error = MPU6050_read (MPU6050_ACCEL_XOUT_H, (uint8_t *) &accel_t_gyro, sizeof(accel_t_gyro));
-    Serial.print(F("Read accel, temp and gyro, error = "));
-    Serial.println(error,DEC);
-   
-   
+    //Serial.print(F("Read accel, temp and gyro, error = "));
+    //Serial.println(error,DEC);
+
+
     // Swap all high and low bytes.
     // After this, the registers values are swapped,
     // so the structure name like x_accel_l does no
     // longer contain the lower byte.
     uint8_t swap;
-    #define SWAP(x,y) swap = x; x = y; y = swap
-   
-    SWAP (accel_t_gyro.reg.x_accel_h, accel_t_gyro.reg.x_accel_l);
+#define SWAP(x,y) swap = x; x = y; y = swap
+
+      SWAP (accel_t_gyro.reg.x_accel_h, accel_t_gyro.reg.x_accel_l);
     SWAP (accel_t_gyro.reg.y_accel_h, accel_t_gyro.reg.y_accel_l);
     SWAP (accel_t_gyro.reg.z_accel_h, accel_t_gyro.reg.z_accel_l);
     SWAP (accel_t_gyro.reg.t_h, accel_t_gyro.reg.t_l);
     SWAP (accel_t_gyro.reg.x_gyro_h, accel_t_gyro.reg.x_gyro_l);
     SWAP (accel_t_gyro.reg.y_gyro_h, accel_t_gyro.reg.y_gyro_l);
     SWAP (accel_t_gyro.reg.z_gyro_h, accel_t_gyro.reg.z_gyro_l);
-   
-  
+
+
     // make a string for assembling the data to log:
     String dataString = String(accel_t_gyro.value.x_gyro) + ',' + 
-                        String(accel_t_gyro.value.y_gyro) + ',' + 
-                        String(accel_t_gyro.value.z_gyro);
-  
+      String(accel_t_gyro.value.y_gyro) + ',' + 
+      String(accel_t_gyro.value.z_gyro);
+
     // open the file. note that only one file can be open at a time,
     // so you have to close this one before opening another.
-    File dataFile = SD.open("datalog.txt", FILE_WRITE);
-  
+    File dataFile = SD.open(currentFile, FILE_WRITE);
+
     // if the file is available, write to it:
     if (dataFile) 
     {
       dataFile.println(dataString);
       dataFile.close();
       // print to the serial port too:
-      Serial.println(dataString);
+      //Serial.println(dataString);
     }
     // if the file isn't open, pop up an error:
     else {
-      Serial.println("error opening datalog.txt");
+      //Serial.println("error opening datalog.txt");
     } 
   } 
   else 
   {
     if(writeBreak) 
     {
-      File dataFile = SD.open("datalog.txt", FILE_WRITE);
-  
+      
+      fileNumber = readMeta();
+      fileNumber++;
+      writeMeta(setMeta);
+      currentFile = intToTextFile(fileNumber);
+      
+      File dataFile = SD.open(currentFile, FILE_WRITE);
+
       // if the file is available, write to it:
       if (dataFile) 
       {
         dataFile.println("STOPCOLLECTING");
         dataFile.close();
         // print to the serial port too:
-        Serial.println("STOPCOLLECTING");
+        //Serial.println("STOPCOLLECTING");
       }
+      
+      //file management
+      
+      
+      
+      
+      
+      
       writeBreak = false;
     }
-    Serial.println("Not writing");
+
     delay(100);
-    
+
     if(bluetoothSwitchState)
     {
-      Serial.println(F("Attempting to open file to send over bluetooth"));
-      File dataFile = SD.open("datalog.txt");
-      
+      //Serial.println(F("Attempting to open file to send over bluetooth"));
+      File dataFile = SD.open(currentFile);
+
       if(dataFile)
       {
-       Serial.println(F("File available, sending"));
-       if(dataFile.available()){
-         bluetooth.println("START");
-       }
-       while(dataFile.available())
-       {
-         byte data = dataFile.read();
-         bluetooth.write(data);
-         Serial.println((char)data);
-       }
-       
-       dataFile.close();
+        //Serial.println(F("File available, sending"));
+        while(dataFile.available())
+        {
+          byte data = dataFile.read();
+          bluetooth.write(data);
+        }
+
+        dataFile.close();
       } 
       else
       {
-       Serial.println(F("No file available")); 
+        Serial.println(F("No file available")); 
       }
     }
     if(deleteSwitchState)
     {
-      Serial.println(F("Deleting datalog.txt"));
-      SD.remove("DATALOG.TXT");
+      //Serial.println(SD.exists("datalog.txt"));
+      //Serial.println(F("Deleting datalog.txt"));
+      //Serial.println(SD.remove("datalog.txt"));
     }
   }
 }
@@ -346,16 +438,16 @@ void loop()
 int MPU6050_read(int start, uint8_t *buffer, int size)
 {
   int i, n, error;
- 
+
   Wire.beginTransmission(MPU6050_I2C_ADDRESS);
   n = Wire.write(start);
   if (n != 1)
     return (-10);
- 
+
   n = Wire.endTransmission(false);    // hold the I2C-bus
   if (n != 0)
     return (n);
- 
+
   // Third parameter is true: relase I2C-bus after data is read.
   Wire.requestFrom(MPU6050_I2C_ADDRESS, size, true);
   i = 0;
@@ -365,7 +457,7 @@ int MPU6050_read(int start, uint8_t *buffer, int size)
   }
   if ( i != size)
     return (-11);
- 
+
   return (0);  // return : no error
 }
 
@@ -391,23 +483,23 @@ int MPU6050_read(int start, uint8_t *buffer, int size)
 int MPU6050_write(int start, const uint8_t *pData, int size)
 {
   int n, error;
- 
+
   Wire.beginTransmission(MPU6050_I2C_ADDRESS);
   n = Wire.write(start);        // write the start address
   if (n != 1)
     return (-20);
- 
+
   n = Wire.write(pData, size);  // write data bytes
   if (n != size)
     return (-21);
- 
+
   error = Wire.endTransmission(true); // release the I2C-bus
   if (error != 0)
     return (error);
- 
+
   return (0);         // return : no error
 }
- 
+
 // --------------------------------------------------------
 // MPU6050_write_reg
 //
@@ -419,9 +511,9 @@ int MPU6050_write(int start, const uint8_t *pData, int size)
 int MPU6050_write_reg(int reg, uint8_t data)
 {
   int error;
- 
+
   error = MPU6050_write(reg, &data, 1);
- 
+
   return (error);
 }
 
@@ -429,20 +521,71 @@ int MPU6050_write_reg(int reg, uint8_t data)
 char* print_binary(uint8_t data)
 {
   uint8_t mask = 128;
-  char finalString[8];
-  
+  char finalString[9];
+
   uint8_t i;
-  
+
   for(i = 0; i < 8; i++){
     if(data & mask){
       finalString[i] = '1';
-    } else {
+    } 
+    else {
       finalString[i] = '0';
     }     
-    
+
     mask = mask >> 1;
   }
-  
+
+  finalString[8] = '\0';
+
   return finalString;
+
+}
+
+int readMeta() {
+  Serial.println("Checking meta file");
+  File meta = SD.open("meta.txt", FILE_WRITE);
+  int metaInt = -1;
+  if (meta)
+  {
+    Serial.println("Creating int from meta file");
+    char metaChars[10];
+    int i = 0;
+    while(meta.available())
+    {
+      metaChars[i] = meta.read();
+      i++;
+    }
+    metaChars[i] = '\0';
+    int metaInt = atoi(metaChars);
+    Serial.println(String(metaInt));
+  }
+  
+  return metaInt;
   
 }
+
+void setMeta(int value)
+{
+  SD.remove("meta.txt");
+  File meta = SD.open("meta.txt", FILE_WRITE);
+  
+  if(meta)
+  {
+    meta.print(String(value));
+    meta.close();
+  }
+    
+}
+
+char* intToTextFile(int value) 
+{
+  char textFile[14];
+  String temp = String(value);
+  temp.concat(".txt");
+  
+  temp.toCharArray(textFile, sizeof(textFile));
+  
+  return textFile;
+}
+
