@@ -220,25 +220,15 @@ void setup()
   //-------------------- FileManagement ------------------------//
   
   
+  Serial.println("Init checking Meta File");
   fileNumber = readMeta();
   if(fileNumber == -1)
   {
     setMeta(0);
+    fileNumber = 0;
   }
-  currentFile = intToTextFile(fileNumber);
-  
-  Serial.println("Init checking Meta File");
-  if(!SD.exists("meta.txt"))
-  {
-    Serial.println("Creating Meta File");
-    File meta = SD.open("meta.txt", FILE_WRITE);
-    if(meta)
-    {
-      Serial.println("Adding a zero to the metafile");
-      meta.print('0');
-      meta.close(); 
-    } 
-  }
+  String temp = intToTextFile(fileNumber);
+  temp.toCharArray(currentFile, sizeof(currentFile));
   
 }
 
@@ -248,35 +238,41 @@ void loop()
   {
     if(bluetooth.available())
     {
-      switch(bluetooth.read()) 
+      char gotten = bluetooth.read();
+      Serial.println(String(gotten));
+      switch(gotten)
       {
         //write to file
       case 'w':
+	Serial.println("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW");
         writeSwitchState = 1;
         bluetoothSwitchState = 0;
         deleteSwitchState = 0;
         break;
         //send file over bluetooth
       case 'b':
+	Serial.println("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
         writeSwitchState = 0;
         bluetoothSwitchState = 1;
         deleteSwitchState = 0;
         break;
         //delete file
       case 'd':
+	Serial.println("DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
         writeSwitchState = 0;
         bluetoothSwitchState = 0;
         deleteSwitchState = 1;
         break;
         //do nothing
       case 'i':
+	Serial.println("IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII");
         writeSwitchState = 0;
         bluetoothSwitchState = 0;
         deleteSwitchState = 0;
         break;
 
       default:
-        //Serial.println("THIS SHOULD NOT HAPPEN");
+        Serial.println("THIS SHOULD NOT HAPPEN ~~~~~~~~~~~~~~~~~~");
         break;
       }
     }
@@ -295,7 +291,10 @@ void loop()
   //Check if we should be logging to SD card from switch
   if(writeSwitchState)
   {
-
+    if(!writeBreak)
+    {
+	Serial.println("Entering writeSwitchState");
+    }
     writeBreak = true;
 
     int error;
@@ -360,11 +359,6 @@ void loop()
     if(writeBreak) 
     {
       
-      fileNumber = readMeta();
-      fileNumber++;
-      writeMeta(setMeta);
-      currentFile = intToTextFile(fileNumber);
-      
       File dataFile = SD.open(currentFile, FILE_WRITE);
 
       // if the file is available, write to it:
@@ -373,16 +367,18 @@ void loop()
         dataFile.println("STOPCOLLECTING");
         dataFile.close();
         // print to the serial port too:
-        //Serial.println("STOPCOLLECTING");
+        Serial.println("STOPCOLLECTING");
       }
+     
+      //Get old meta value and increase it by 1 then set Meta to be that value 
+      fileNumber = readMeta();
+      fileNumber++;
+      setMeta(fileNumber);
       
-      //file management
-      
-      
-      
-      
-      
-      
+      //Set currentFile to be "fileNumber".txt
+      String temp = intToTextFile(fileNumber);
+      temp.toCharArray(currentFile, sizeof(currentFile));
+
       writeBreak = false;
     }
 
@@ -390,17 +386,32 @@ void loop()
 
     if(bluetoothSwitchState)
     {
-      //Serial.println(F("Attempting to open file to send over bluetooth"));
-      File dataFile = SD.open(currentFile);
+      Serial.println(F("Attempting to open file to send over bluetooth"));
+
+      int i = 0;
+      fileNumber = readMeta();
+      char fileToSend[14];
+
+      //Loop from file 0.txt to "meta.value".txt till you find a file that exists
+      while(i < fileNumber || SD.exists(fileToSend))
+      {
+	String temp = intToTextFile(i);
+	temp.toCharArray(fileToSend, sizeof(fileToSend));	
+	i++;
+      }
+      //Send the file that you found
+      File dataFile = SD.open(fileToSend);
 
       if(dataFile)
       {
-        //Serial.println(F("File available, sending"));
+        Serial.println(F("File available, sending"));
         while(dataFile.available())
         {
           byte data = dataFile.read();
           bluetooth.write(data);
         }
+	//Send a \r\n
+	bluetooth.println();	
 
         dataFile.close();
       } 
@@ -411,9 +422,27 @@ void loop()
     }
     if(deleteSwitchState)
     {
-      //Serial.println(SD.exists("datalog.txt"));
-      //Serial.println(F("Deleting datalog.txt"));
-      //Serial.println(SD.remove("datalog.txt"));
+      Serial.println("Trying to delete file");
+      int i = 0;
+      fileNumber = readMeta();
+      char fileToDelete[14];
+
+      //Loop from file 0.txt to "meta.value".txt till you find a file that exists
+      while(i < fileNumber || SD.exists(fileToDelete))
+      {
+	String temp = intToTextFile(i);
+	temp.toCharArray(fileToDelete, sizeof(fileToDelete));	
+	i++;
+      }
+      
+      if(SD.remove(fileToDelete))
+      {
+	Serial.println("File got deleted");
+      }
+      else
+      {
+	Serial.println("PROBLEM OH NO, File did not get deleted");
+      }
     }
   }
 }
@@ -557,7 +586,7 @@ int readMeta() {
       i++;
     }
     metaChars[i] = '\0';
-    int metaInt = atoi(metaChars);
+    metaInt = atoi(metaChars);
     Serial.println(String(metaInt));
   }
   
@@ -578,14 +607,13 @@ void setMeta(int value)
     
 }
 
-char* intToTextFile(int value) 
+String intToTextFile(int value) 
 {
-  char textFile[14];
-  String temp = String(value);
-  temp.concat(".txt");
-  
-  temp.toCharArray(textFile, sizeof(textFile));
+  String textFile;
+  textFile = String(value);
+  textFile.concat(".txt");
   
   return textFile;
 }
+
 
