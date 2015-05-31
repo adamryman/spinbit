@@ -135,13 +135,22 @@ const int sdChipSelectPin = 10;
 const int writeSwitchPin = 7;
 const int bluetoothSwitchPin = 6;
 const int deleteSwitchPin = 5;
+const int ledPin = 9;
+
+const int buttonPin = 2;
+int buttonState;
+int lastButtonState = LOW;
+
+long lastDebounceTime = 0;
+long debounceDelay = 50;
 
 int bluetoothSwitchState = 0;
-int writeSwitchState = 0;
+boolean writeSwitchState = 0;
 int deleteSwitchState = 0;
 
 boolean writeBreak = false;
 
+long lastSpin;
 int bluetoothTx = 3;  // TX - TX
 int bluetoothRx = 4;  // RX - RX
 
@@ -185,6 +194,7 @@ void setup()
   //Check Gyro Config register
   error = MPU6050_read (MPU6050_GYRO_CONFIG, &c, 1);
   Serial.print(F("FS_SLEL3: "));
+  Serial.println(c,BIN);
   Serial.println(print_binary(c));
 
   // Clear the 'sleep' bit to start the sensor.
@@ -216,24 +226,65 @@ void setup()
   pinMode(writeSwitchPin, INPUT);
   pinMode(bluetoothSwitchPin, INPUT);
   pinMode(deleteSwitchPin, INPUT);
+  pinMode(buttonPin, INPUT);
+  pinMode(ledPin, OUTPUT);
   
   //-------------------- FileManagement ------------------------//
   
-  
-  Serial.println("Init checking Meta File");
+  //setMeta(0);
+  //Serial.println("doing meta testing");
+  //setMeta(10);
+  //int test = readMeta();
+  Serial.println(F("Init checking Meta File"));
   fileNumber = readMeta();
   if(fileNumber == -1)
   {
-    setMeta(0);
-    fileNumber = 0;
+    setMeta(10);
+    fileNumber = 10;
   }
   String temp = intToTextFile(fileNumber);
   temp.toCharArray(currentFile, sizeof(currentFile));
   
 }
 
+double runningSum;
+double runningSamples[10];
+int runningSampleCounter = 0;
+
+double sum = 0;
+double spinThreshold = 0.75;
+int changeThreshold = 5000;
+long beginningOfTime;
+
+double rollOver = 320000;
+
 void loop()
 {
+  digitalWrite(ledPin, writeSwitchState);
+  
+  int currentButtonValue = digitalRead(buttonPin);
+  
+  if (currentButtonValue != lastButtonState)
+  {
+    lastDebounceTime = millis();
+  }
+
+  if ((millis() - lastDebounceTime) > debounceDelay)
+  {
+    if (currentButtonValue != buttonState) 
+    {
+      Serial.println("Button State Changed");
+      if( currentButtonValue == 1 && buttonState == 0)
+       { 
+         writeSwitchState = !writeSwitchState; 
+       }
+       
+      buttonState = currentButtonValue;
+      
+      
+      }
+   }
+  
   if(BLUETOOTHCONTROLLED)
   {
     if(bluetooth.available())
@@ -244,35 +295,35 @@ void loop()
       {
         //write to file
       case 'w':
-	Serial.println("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW");
+	Serial.println(F("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW"));
         writeSwitchState = 1;
         bluetoothSwitchState = 0;
         deleteSwitchState = 0;
         break;
         //send file over bluetooth
       case 'b':
-	Serial.println("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
+	Serial.println(F("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"));
         writeSwitchState = 0;
         bluetoothSwitchState = 1;
         deleteSwitchState = 0;
         break;
         //delete file
       case 'd':
-	Serial.println("DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
+	Serial.println(F("DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD"));
         writeSwitchState = 0;
         bluetoothSwitchState = 0;
         deleteSwitchState = 1;
         break;
         //do nothing
       case 'i':
-	Serial.println("IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII");
+	Serial.println(F("IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII"));
         writeSwitchState = 0;
         bluetoothSwitchState = 0;
         deleteSwitchState = 0;
         break;
 
       default:
-        Serial.println("THIS SHOULD NOT HAPPEN ~~~~~~~~~~~~~~~~~~");
+        Serial.println(F("THIS SHOULD NOT HAPPEN ~~~~~~~~~~~~~~~~~~"));
         break;
       }
     }
@@ -294,6 +345,16 @@ void loop()
     if(!writeBreak)
     {
 	Serial.println("Entering writeSwitchState");
+        sum = 0;
+        runningSampleCounter = 0;
+        runningSum = 0;
+        for(int i = 0; i < 10; i++)
+        {
+          runningSamples[i] = 0;
+        }
+        Serial.println(rollOver);
+        beginningOfTime = millis();
+        lastSpin = millis();
     }
     writeBreak = true;
 
@@ -321,9 +382,9 @@ void loop()
     // so the structure name like x_accel_l does no
     // longer contain the lower byte.
     uint8_t swap;
-#define SWAP(x,y) swap = x; x = y; y = swap
+    #define SWAP(x,y) swap = x; x = y; y = swap
 
-      SWAP (accel_t_gyro.reg.x_accel_h, accel_t_gyro.reg.x_accel_l);
+    SWAP (accel_t_gyro.reg.x_accel_h, accel_t_gyro.reg.x_accel_l);
     SWAP (accel_t_gyro.reg.y_accel_h, accel_t_gyro.reg.y_accel_l);
     SWAP (accel_t_gyro.reg.z_accel_h, accel_t_gyro.reg.z_accel_l);
     SWAP (accel_t_gyro.reg.t_h, accel_t_gyro.reg.t_l);
@@ -339,41 +400,131 @@ void loop()
 
     // open the file. note that only one file can be open at a time,
     // so you have to close this one before opening another.
-    File dataFile = SD.open(currentFile, FILE_WRITE);
+    
+      sum = sum + accel_t_gyro.value.y_gyro;
+      if(sum >= rollOver || sum <= -rollOver)
+      {
+        File dataFile = SD.open(currentFile, FILE_WRITE);
 
-    // if the file is available, write to it:
-    if (dataFile) 
-    {
-      dataFile.println(dataString);
-      dataFile.close();
-      // print to the serial port too:
-      //Serial.println(dataString);
-    }
-    // if the file isn't open, pop up an error:
-    else {
-      //Serial.println("error opening datalog.txt");
-    } 
+        // if the file is available, write to it:
+        if (dataFile) 
+        {
+          long currentSpin = millis();
+          dataFile.print(currentSpin - lastSpin);
+          lastSpin = currentSpin;
+          dataFile.print(" ");
+          dataFile.close();
+          // print to the serial port too:
+          //Serial.println(dataString);
+        }
+        
+        if(sum > 0)
+        {
+          sum = sum - rollOver;
+        } else
+        {
+           sum = sum + rollOver;
+        }
+          
+        
+      }
+      Serial.print("Sum: ");
+      Serial.println(sum);
+      Serial.println();
+//    
+//    
+//    runningSum = runningSum + accel_t_gyro.value.y_gyro - runningSamples[runningSampleCounter];
+//    runningSamples[runningSampleCounter] = accel_t_gyro.value.y_gyro;
+//    
+//    runningSampleCounter++;
+//    if(runningSampleCounter == 10)
+//    {
+//      runningSampleCounter = 0; 
+//    }
+//    Serial.print("Sum: ");
+//    Serial.println(sum);
+//      Serial.println();
+//    Serial.print("Running Sum:");
+//    Serial.println(runningSum);
+//    if((sum <= 0 && runningSum < 0) || (sum >= 0 && runningSum > 0))
+//    {
+//      sum = sum + accel_t_gyro.value.y_gyro;
+//      if(abs(sum) >= 360*250)
+//      {
+//        File dataFile = SD.open(currentFile, FILE_WRITE);
+//
+//        // if the file is available, write to it:
+//        if (dataFile) 
+//        {
+//          dataFile.print(millis() - beginningOfTime);
+//          dataFile.print(" ");
+//          dataFile.close();
+//          // print to the serial port too:
+//          //Serial.println(dataString);
+//        }
+//        sum = sum - 360*250;
+//      }
+//      else if(abs(runningSum) > changeThreshold*250)
+//      {
+//        sum = runningSum;
+//        for(int i = 0; i < 10; i++)
+//        {
+//          runningSamples[i] = 0;
+//        }
+//        runningSum = 0;
+//        if(abs(sum) >= 360*spinThreshold*250)
+//        {
+//          File dataFile = SD.open(currentFile, FILE_WRITE);
+//
+//          // if the file is available, write to it:
+//          if (dataFile) 
+//          {
+//            dataFile.print(millis() - beginningOfTime);
+//            dataFile.print(" ");
+//            dataFile.close();
+//            // print to the serial port too:
+//            //Serial.println(dataString);
+//          }
+//        }
+//      }
+//    }
   } 
   else 
   {
     if(writeBreak) 
     {
+//      if(abs(sum) >= 360*250)
+//      {
+//        File dataFile = SD.open(currentFile, FILE_WRITE);
+//
+//        // if the file is available, write to it:
+//        if (dataFile) 
+//        {
+//          dataFile.print(millis() - beginningOfTime);
+//          dataFile.print(" ");
+//          dataFile.close();
+//          // print to the serial port too:
+//          //Serial.println(dataString);
+//        }
+//      }
       
       File dataFile = SD.open(currentFile, FILE_WRITE);
 
       // if the file is available, write to it:
       if (dataFile) 
       {
-        dataFile.println("STOPCOLLECTING");
+        dataFile.println("");
         dataFile.close();
         // print to the serial port too:
-        Serial.println("STOPCOLLECTING");
+        //Serial.println("STOPCOLLECTING");
       }
      
       //Get old meta value and increase it by 1 then set Meta to be that value 
       fileNumber = readMeta();
       fileNumber++;
       setMeta(fileNumber);
+      Serial.print("Does meta exist?:");
+      Serial.println(SD.exists("meta.txt"));
       
       //Set currentFile to be "fileNumber".txt
       String temp = intToTextFile(fileNumber);
@@ -388,15 +539,15 @@ void loop()
     {
       Serial.println(F("Attempting to open file to send over bluetooth"));
 
-      int i = 0;
+      int i = 10;
       fileNumber = readMeta();
       char fileToSend[14];
-
+      Serial.println(F("File loop _______________"));
       //Loop from file 0.txt to "meta.value".txt till you find a file that exists
-      while(i < fileNumber || SD.exists(fileToSend))
+      while(i < fileNumber && !SD.exists(fileToSend))
       {
 	String temp = intToTextFile(i);
-	temp.toCharArray(fileToSend, sizeof(fileToSend));	
+	temp.toCharArray(fileToSend, sizeof(fileToSend));
 	i++;
       }
       //Send the file that you found
@@ -409,9 +560,7 @@ void loop()
         {
           byte data = dataFile.read();
           bluetooth.write(data);
-        }
-	//Send a \r\n
-	bluetooth.println();	
+        }	
 
         dataFile.close();
       } 
@@ -419,16 +568,17 @@ void loop()
       {
         Serial.println(F("No file available")); 
       }
+      bluetoothSwitchState = 0;
     }
     if(deleteSwitchState)
     {
-      Serial.println("Trying to delete file");
-      int i = 0;
+      Serial.println(F("Trying to delete file"));
+      int i = 10;
       fileNumber = readMeta();
       char fileToDelete[14];
 
       //Loop from file 0.txt to "meta.value".txt till you find a file that exists
-      while(i < fileNumber || SD.exists(fileToDelete))
+      while(i < fileNumber && !SD.exists(fileToDelete))
       {
 	String temp = intToTextFile(i);
 	temp.toCharArray(fileToDelete, sizeof(fileToDelete));	
@@ -437,14 +587,16 @@ void loop()
       
       if(SD.remove(fileToDelete))
       {
-	Serial.println("File got deleted");
+	Serial.println(F("File got deleted"));
       }
       else
       {
-	Serial.println("PROBLEM OH NO, File did not get deleted");
+	Serial.println(F("PROBLEM OH NO, File did not get deleted"));
       }
+      deleteSwitchState = 0;
     }
   }
+  lastButtonState = currentButtonValue;
 }
 
 
@@ -572,12 +724,12 @@ char* print_binary(uint8_t data)
 }
 
 int readMeta() {
-  Serial.println("Checking meta file");
-  File meta = SD.open("meta.txt", FILE_WRITE);
+  Serial.println(F("Checking meta file"));
+  File meta = SD.open("meta.txt");
   int metaInt = -1;
   if (meta)
   {
-    Serial.println("Creating int from meta file");
+    Serial.println(F("Creating int from meta file"));
     char metaChars[10];
     int i = 0;
     while(meta.available())
@@ -589,7 +741,7 @@ int readMeta() {
     metaInt = atoi(metaChars);
     Serial.println(String(metaInt));
   }
-  
+  meta.close();
   return metaInt;
   
 }
@@ -601,6 +753,8 @@ void setMeta(int value)
   
   if(meta)
   {
+    Serial.print(F("Setting Meta to:"));
+    Serial.println(String(value));
     meta.print(String(value));
     meta.close();
   }
@@ -615,5 +769,6 @@ String intToTextFile(int value)
   
   return textFile;
 }
+
 
 
